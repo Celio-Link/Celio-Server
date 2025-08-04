@@ -3,7 +3,7 @@ import WebSocket, {WebSocketServer} from 'ws';
 import {Client} from "./client";
 import {ErrorType, ControlMessage, SessionCreationMessage, JoinMessage} from "./messages/session";
 import {Session} from "./session";
-import { nanoid } from 'nanoid'
+const { nanoid } = await import('nanoid');
 
 
 const wss = new WebSocketServer({ port: 8080 });
