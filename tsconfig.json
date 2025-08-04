@@ -7,6 +7,6 @@
     "moduleResolution": "node"
   },
   "include": [
-    "src/server"
+    "src/index"
   ]
 }

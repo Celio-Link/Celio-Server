@@ -4,14 +4,19 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "pnpm /dev:.*/",
+    "dev:build": "esbuild dev.ts ./src --bundle --outdir=dist --packages=external --platform=node --sourcemap --watch",
+    "dev:run": "node --inspect --no-warnings --loader ./dist/dev.js --watch dist/src",
+    "build": "esbuild index=./src --bundle --minify --outdir=dist --packages=external --platform=node",
+    "start": "node dist"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
-  "type": "module",
+  "type": "commonjs",
   "dependencies": {
     "nanoid": "^5.1.5",
+    "pnpm": "^10.14.0",
     "uuid": "^11.1.0",
     "ws": "^8.18.3"
   },
