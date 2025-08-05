@@ -20,7 +20,10 @@ export class Session {
         let otherClient: Client = this.oppositeClient(client)
 
         if (isBinary) {
-            otherClient.sendBinary(data)
+            //otherClient.sendBinary(data)
+            //console.log("Binary received")
+            setTimeout(() => { otherClient.sendBinary(data) }, 200)
+
             return
         }
 
