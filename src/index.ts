@@ -10,8 +10,6 @@ const wss = new WebSocketServer({ port: 8080 });
 let idClientsMap = new Map<String, Client>
 let sessions: Session[] = []
 
-console.log('WebSocket server running at ws://localhost:8080');
-
 function handleSessionCreation(client: Client, data: WebSocket.RawData, isBinary: boolean) {
     console.log('Client creation creation');
     if (isBinary) {
