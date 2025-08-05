@@ -21,7 +21,6 @@ export class Session {
 
         if (isBinary) {
             otherClient.sendBinary(data)
-            console.log("Binary received")
             return
         }
 
