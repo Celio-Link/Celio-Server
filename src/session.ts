@@ -56,6 +56,7 @@ export class Session {
                 break
 
             case LinkStatus.LinkConnected:
+                this.clientStatus.set(client, LinkStatus.LinkConnected);
                 otherClient.sendCommand(CommandType.ConnectLink)
                 break;
 
