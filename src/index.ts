@@ -42,6 +42,11 @@ function handleSessionCreation(client: Client, data: WebSocket.RawData, isBinary
         client.sendError(ErrorType.ClientAlreadyInSession)
         return
     }
+    if (otherClient.id == client.id)
+    {
+        client.sendError(ErrorType.ClientSameId)
+        return
+    }
 
     const clientJoinedMessage: SessionCreationMessage = { type: 'sessionCreate', otherId: otherClient.id };
     client.sendControlMessage(clientJoinedMessage)
@@ -54,23 +59,27 @@ function handleSessionCreation(client: Client, data: WebSocket.RawData, isBinary
     sessions.push(session)
 }
 
+function handleDisconnect(client: Client, data: WebSocket.RawData, isBinary: boolean)
+{
+    console.log('Client disconnected');
+    sessions = sessions.filter((session: Session) => {session.hasClient(client)})
+    idClientsMap.delete(client.id);
+}
 
 wss.on('connection', (ws: WebSocket) => {
     console.log('Client connected');
 
     let client = new Client(ws, nanoid())
     idClientsMap.set(client.id, client)
-    client.setHandler(handleSessionCreation)
+
+    client.setMessageHandler(handleSessionCreation)
+    client.setDisconnectHandler(handleDisconnect)
 
     setTimeout(() => {
         const message: JoinMessage = { type: 'join', id: client.id };
         client.sendControlMessage(message)
         console.log("Send Id to client")
     }, 1000);
-
-    ws.on('close', () => {
-        console.log('Client disconnected');
-    });
 
     ws.on('error', (err) => {
         console.error('Client error:', err);

@@ -12,8 +12,8 @@ export class Session {
         this.clientStatus.set(clients[0], LinkStatus.Empty)
         this.clientStatus.set(clients[1], LinkStatus.Empty)
 
-        this.clients[0].setHandler(this.handleIncomingMessage.bind(this))
-        this.clients[1].setHandler(this.handleIncomingMessage.bind(this))
+        this.clients[0].setMessageHandler(this.handleIncomingMessage.bind(this))
+        this.clients[1].setMessageHandler(this.handleIncomingMessage.bind(this))
     }
 
     handleIncomingMessage(client: Client, data: WebSocket.RawData, isBinary: boolean): void {
@@ -72,5 +72,9 @@ export class Session {
             return this.clients[1]
         }
         return this.clients[0]
+    }
+
+    hasClient(client: Client): boolean {
+        return client.id === this.clients[0].id || client.id === this.clients[1].id;
     }
 }

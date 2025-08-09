@@ -8,13 +8,19 @@ export type ClientHandler = (client: Client, data: WebSocket.RawData, isBinary: 
 export class Client {
 
     private handler?: ClientHandler;
+    private disconnectHandler?: ClientHandler;
 
     constructor(public ws: WebSocket, public id: string, public inSession: boolean = false) {
         ws.on("message", this.handleIncomingMessage.bind(this));
+        ws.on('disconnect', this.handleDisconnect.bind(this));
     }
 
-    setHandler(handler: ClientHandler) {
+    setMessageHandler(handler: ClientHandler) {
         this.handler = handler;
+    }
+
+    setDisconnectHandler(handler: ClientHandler) {
+        this.disconnectHandler = handler;
     }
 
     sendError(errorType: ErrorType) {
@@ -45,6 +51,13 @@ export class Client {
         if (this.handler)
         {
             this.handler(this, data, isBinary);
+        }
+    }
+
+    private handleDisconnect(data: WebSocket.RawData, isBinary: boolean): void {
+        if (this.disconnectHandler)
+        {
+            this.disconnectHandler(this, data, isBinary);
         }
     }
 }

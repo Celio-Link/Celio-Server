@@ -1,6 +1,7 @@
 export enum ErrorType {
     ClientNotFound = 'client-not-found',
     ClientAlreadyInSession = 'client-already-in-session',
+    ClientSameId = 'client-same-id',
 }
 
 export type JoinMessage = {
