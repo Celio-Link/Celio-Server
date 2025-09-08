@@ -1,80 +1,104 @@
-import {Client} from "./client";
+import { Socket } from "socket.io";
 // @ts-ignore
-import WebSocket from "ws";
 import {CommandType, LinkStatus, StatusMessage} from "./messages/gameboy";
 
 export class Session {
 
-    private clientStatus: Map<Client, LinkStatus> = new Map();
+    private clientStatus: Map<Socket, LinkStatus> = new Map();
     private masterSelected: boolean = false;
 
-    constructor(public clients: [Client, Client]) {
-        this.clientStatus.set(clients[0], LinkStatus.Empty)
-        this.clientStatus.set(clients[1], LinkStatus.Empty)
+    private sockets: Socket[] = [];
 
-        this.clients[0].setMessageHandler(this.handleIncomingMessage.bind(this))
-        this.clients[1].setMessageHandler(this.handleIncomingMessage.bind(this))
-    }
+    private socketEventHandlers = {
 
-    handleIncomingMessage(client: Client, data: WebSocket.RawData, isBinary: boolean): void {
-        let otherClient: Client = this.oppositeClient(client)
+        deviceStatus: (socket: Socket, statusMessage: StatusMessage) => {
+            this.handleStatusMessage(socket, statusMessage);
+        },
 
-        if (isBinary) {
-            //otherClient.sendBinary(data)
-            //console.log("Binary received")
-            setTimeout(() => { otherClient.sendBinary(data) }, 200)
-
-            return
+        deviceData: (socket: Socket, blob: Blob) => {
+            const otherSocket: Socket | undefined = this.oppositeSocket(socket);
+            if (!otherSocket) return;
+            otherSocket.emit("deviceData", blob);
         }
+    };
 
-        const message: any = JSON.parse(data.toString());
-        const statusMessage: StatusMessage = message.message as StatusMessage;
+    constructor(private sessionId: string) {}
 
+
+    handleStatusMessage(socket: Socket, statusMessage: StatusMessage): void {
         console.log("Received status: " + LinkStatus[statusMessage.statusType]);
+
+        const otherSocket: Socket | undefined = this.oppositeSocket(socket);
+        if (!otherSocket) return;
 
         switch (statusMessage.statusType) {
             case LinkStatus.HandshakeWaiting:
                 if (!this.masterSelected) {
-                    client.sendCommand(CommandType.SetModeMaster)
+                    socket.emit("deviceCommand", CommandType.SetModeMaster)
                     this.masterSelected = true;
                 }
                 else {
-                    client.sendCommand(CommandType.SetModeSlave)
+                    socket.emit("deviceCommand", CommandType.SetModeSlave)
                 }
                 break
 
             case LinkStatus.HandshakeReceived:
-                this.clientStatus.set(client, LinkStatus.HandshakeReceived);
-                if (this.clientStatus.get(otherClient) === LinkStatus.HandshakeReceived) {
-                    client.sendCommand(CommandType.StartHandshake)
-                    otherClient.sendCommand(CommandType.StartHandshake);
+                this.clientStatus.set(socket, LinkStatus.HandshakeReceived);
+                if (this.clientStatus.get(otherSocket) === LinkStatus.HandshakeReceived) {
+                    socket.emit("deviceCommand", CommandType.StartHandshake)
+                    otherSocket.emit("deviceCommand", CommandType.StartHandshake);
                 }
                 break
 
             case LinkStatus.HandshakeFinished:
-                this.clientStatus.set(client, LinkStatus.HandshakeFinished);
+                this.clientStatus.set(socket, LinkStatus.HandshakeFinished);
                 break
 
             case LinkStatus.LinkConnected:
-                this.clientStatus.set(client, LinkStatus.LinkConnected);
-                otherClient.sendCommand(CommandType.ConnectLink)
+                this.clientStatus.set(socket, LinkStatus.LinkConnected);
+                otherSocket.emit("deviceCommand", CommandType.ConnectLink)
                 break;
 
             case LinkStatus.LinkReconnecting:
-                this.clientStatus.set(client, LinkStatus.LinkReconnecting);
+                this.clientStatus.set(socket, LinkStatus.LinkReconnecting);
                 break;
         }
 
     }
 
-    oppositeClient(client: Client): Client {
-        if (client.id === this.clients[0].id) {
-            return this.clients[1]
-        }
-        return this.clients[0]
+    id(): String {
+        return this.sessionId;
     }
 
-    hasClient(client: Client): boolean {
-        return client.id === this.clients[0].id || client.id === this.clients[1].id;
+    isFull(): boolean {
+        return this.sockets.length >= 2;
+    }
+
+    enter(socket: Socket) : boolean{
+        if (this.isFull()) return false;
+        this.sockets.push(socket);
+        Object.entries(this.socketEventHandlers).forEach(([event, handler]) => {
+            socket.on(event, (data) => handler(socket, data));
+        });
+
+        return true;
+    }
+
+    leave(socket: Socket) {
+        const index = this.sockets.findIndex(socket => socket === socket);
+        if (index < 0) return;
+        Object.entries(this.socketEventHandlers).forEach(([event, handler]) => {
+            socket.off(event, handler);
+        });
+        this.sockets.splice(index, 1);
+    }
+
+    oppositeSocket(socket: Socket): Socket | undefined {
+        if (this.sockets.length < 2) return undefined;
+        if (socket.id === this.sockets[0].id) {
+            return this.sockets[1]
+        }
+        return this.sockets[0]
+
     }
 }
