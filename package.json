@@ -9,7 +9,8 @@
     "dev:build": "esbuild dev.ts ./src --bundle --outdir=dist --packages=external --format=esm --platform=node --sourcemap --watch",
     "dev:run": "node --inspect --no-warnings --loader ./dist/dev.js --watch dist/src",
     "build": "esbuild index=./src --bundle --minify --outdir=dist --packages=external --format=esm --platform=node",
-    "start": "node dist"
+    "start": "node dist",
+    "test": "vitest run"
   },
   "keywords": [],
   "author": "",
@@ -24,6 +25,7 @@
     "ws": "^8.18.3"
   },
   "devDependencies": {
-    "@types/ws": "^8.18.1"
+    "@types/ws": "^8.18.1",
+    "vitest": "^2.1.3"
   }
 }

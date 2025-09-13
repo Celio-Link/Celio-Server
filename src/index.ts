@@ -1,9 +1,8 @@
 // @ts-ignore
 import { createServer } from "http";
 import { Server, Socket } from "socket.io";
-import { ErrorType, ControlMessage, SessionCreationMessage, JoinMessage } from "./messages/session";
-import { SessionManager } from "./sessionManager";
-import { nanoid } from 'nanoid';
+import { JoinMessage } from "./messages/session.js";
+import { SessionManager } from "./sessionManager.js";
 
 
 const httpServer = createServer();
@@ -13,31 +12,33 @@ const io = new Server(httpServer, {
     transports: ["websocket"], // 🚀 only WebSocket
 });
 
-
-
 io.on("connection", (socket: Socket) => {
+    console.log(socket.id + ` Client connected`);
+    socket.removeAllListeners("sessionCreate");
     socket.on("sessionCreate", (msg: JoinMessage, responseHandler) => {
-        const sessionId = sessionManager.createSession(socket)
+        const sessionId = sessionManager.createSession(socket);
+        console.log(socket.id + ` Client created session with id ` + sessionId);
         responseHandler(sessionId);
     });
 
     socket.on("sessionJoin", (msg: JoinMessage, responseHandler) => {
+        console.log(socket.id + ` Client wants to join session ` + msg.id);
         const sessionId = sessionManager.enterSession(socket, msg.id)
+
         return responseHandler(sessionId);
     });
 
+    socket.on("sessionLeft", (msg: JoinMessage, responseHandler) => {
+        sessionManager.leaveSession(socket);
+        console.log(socket.id + ` Client left session`);
+    });
+
     socket.on("disconnect", () => {
-        const session = socketToSession.get(socket);
-        if (session === undefined) return;
-
-        socketToSession.delete(socket);
-
-        if (!session.isFull()) {
-            const index = sessions.findIndex(sessionTemp => sessionTemp.id() === session.id());
-            sessions.splice(index, 1);
-        }
-        else {
-            session.leave(socket);
-        }
+        console.log(socket.id + ` Client disconnected`);
+        sessionManager.leaveSession(socket);
     });
 })
+
+httpServer.listen(8080, () => {
+    console.log(`Server listening on http://localhost:${8080}`);
+});
