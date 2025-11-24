@@ -1,8 +1,8 @@
 import { Session } from "./session.js";
-import { Socket} from "socket.io";
 import { nanoid } from "nanoid";
 import { Result } from 'true-myth';
-import { ok, err, map, toString } from 'true-myth/result';
+import { ok, err } from 'true-myth/result';
+import {Client} from "./client.js";
 
 enum ErrorType {
     NotFound = "Not Found",
@@ -10,37 +10,35 @@ enum ErrorType {
 }
 
 interface SessionState {
-    id: string;
+    sessionId: string;
     full: boolean;
 }
 
 export class SessionManager {
 
     private sessions: Session[] = [];
-    private socketToSession: Map<Socket, Session> = new Map();
+    private clientToSession: Map<Client, Session> = new Map();
 
-    createSession(socket: Socket) :  Result<SessionState, ErrorType> {
-        if (this.socketToSession.has(socket)) return err(ErrorType.AlreadyExists);
+    createSession(client: Client) :  Result<SessionState, ErrorType> {
+        if (this.clientToSession.has(client)) return err(ErrorType.AlreadyExists);
         const sessionId: string = nanoid();
         this.sessions.push(new Session(sessionId));
-        return this.enterSession(socket, sessionId);
+        return this.enterSession(client, sessionId);
     }
 
-    enterSession(socket: Socket, sessionId: string) : Result<SessionState, ErrorType>
-    {
+    enterSession(client: Client, sessionId: string) : Result<SessionState, ErrorType> {
         const session = this.findSession(sessionId)
         if (!session) return err(ErrorType.NotFound);
 
-        this.socketToSession.set(socket, session);
-        session.enter(socket);
-        return ok({id: sessionId, full: session.isFull()});
+        this.clientToSession.set(client, session);
+        session.enter(client);
+        return ok({sessionId: sessionId, full: session.isFull()});
     }
 
-    leaveSession(socket: Socket)  {
-        if (!this.socketToSession.has(socket)) { return; }
-        let session = this.socketToSession.get(socket)!;
-        session.leave(socket);
-        socket.leave(session.id())
+    leaveSession(client: Client)  {
+        if (!this.clientToSession.has(client)) { return; }
+        let session = this.clientToSession.get(client)!;
+        session.leave(client);
         if (session.isEmpty()) {
             let index = this.sessions.findIndex(tempSession => tempSession.id() === session.id());
             if (index >= 0) {
@@ -48,7 +46,7 @@ export class SessionManager {
                 this.sessions.splice(index, 1);
             }
         }
-        this.socketToSession.delete(socket);
+        this.clientToSession.delete(client);
     }
 
     private findSession(sessionId: string): Session | undefined {
@@ -56,5 +54,6 @@ export class SessionManager {
         if (index < 0) return undefined;
         return this.sessions[index];
     }
+
 
 }
