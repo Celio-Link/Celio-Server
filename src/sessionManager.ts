@@ -10,7 +10,7 @@ enum ErrorType {
 }
 
 interface SessionState {
-    sessionId: string;
+    id: string;
     full: boolean;
 }
 
@@ -32,11 +32,14 @@ export class SessionManager {
 
         this.clientToSession.set(client, session);
         session.enter(client);
-        return ok({sessionId: sessionId, full: session.isFull()});
+        return ok({id: sessionId, full: session.isFull()});
     }
 
     leaveSession(client: Client)  {
-        if (!this.clientToSession.has(client)) { return; }
+        if (!this.clientToSession.has(client)) {
+            console.warn('Client ' + client.id() +' tried to leave session but was not in one');
+            return;
+        }
         let session = this.clientToSession.get(client)!;
         session.leave(client);
         if (session.isEmpty()) {

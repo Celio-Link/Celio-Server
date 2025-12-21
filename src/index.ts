@@ -20,6 +20,7 @@ function removeClient(clientId: string) {
 
 io.on("connection", (socket: Socket) => {
     let clientId: string = socket.handshake.auth.clientId;
+    console.log("auth received:", clientId);
     if (clients.has(clientId)) clients.get(clientId)!.reconnect(socket);
     else clients.set(clientId, new Client(clientId, socket, sessionManager, removeClient));
 })

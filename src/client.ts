@@ -1,5 +1,4 @@
 import {Socket} from "socket.io";
-import {CreateSessionMessage, JoinSessionMessage, LeaveSessionMessage} from "./messages/session.js";
 import {SessionManager} from "./sessionManager.js";
 import {BehaviorSubject, fromEvent, Observable, switchMap} from 'rxjs';
 
@@ -8,21 +7,21 @@ export class Client {
     private socket$: BehaviorSubject<Socket>;
     private eventHandlers = {
 
-        sessionCreate: (msg: CreateSessionMessage, responseHandler: any   ) => {
+        sessionCreate: (responseHandler: any) => {
             const sessionState = this.sessionManager.createSession(this);
-            if (sessionState.isOk) console.log(msg.clientId + ` Client created session with id ` + sessionState.value.sessionId);
+            if (sessionState.isOk) console.log('Client ' + this.clientId + ` created session with id ` + sessionState.value.id);
             responseHandler(sessionState);
         },
 
-        sessionJoin: (msg: JoinSessionMessage, responseHandler: any) => {
-            console.log(msg.clientId + ` Client wants to join session ` + msg.sessionId);
-            const sessionState = this.sessionManager.enterSession(this, msg.sessionId);
-            return responseHandler(sessionState);
+        sessionJoin: (sessionId: string, responseHandler: any) => {
+            console.log(this.clientId + ` Client wants to join session ` + sessionId);
+            const sessionState = this.sessionManager.enterSession(this, sessionId);
+            responseHandler(sessionState);
         },
 
-        sessionLeft: (msg: LeaveSessionMessage) => {
+        sessionLeft: () => {
+            console.log('Client ' + this.clientId + ` tries to leave session`);
             this.sessionManager.leaveSession(this);
-            console.log(msg.clientId + ` Client left session`);
         }
     };
 
@@ -30,8 +29,8 @@ export class Client {
                 private removeCb: (clientId: string) => void) {
         Object.entries(this.eventHandlers).forEach(([event, handler]) => {
             socket.on(event, handler);
-            this.socket$ = new BehaviorSubject(socket);
         });
+        this.socket$ = new BehaviorSubject(socket);
     }
 
     reconnect(socket: Socket) {
@@ -59,10 +58,10 @@ export class Client {
     /**
      * Emit an event to the client.
      * @param event - The name of the event to emit.
-     * @param args - Optional arguments to pass to the event handler.
+     * @param arg - Optional arguments to pass to the event handler.
      */
-    emit(event: string, ...args: any[]) {
-        this.socket.emit(event, args);
+    emit(event: string, arg?: any) {
+        this.socket.emit(event, arg);
     }
 
     /**
@@ -73,21 +72,20 @@ export class Client {
      * @param timeout
      * @param backoff
      */
-    emitWithRetry<R>(event: string, data: any, {
+    emitWithRetry<R>(event: string, data?: any, {
         retries = 5,
         timeout = 1000,
         backoff = 500  // ms added per retry
     } = {}) {
-
         return new Promise((resolve, reject) => {
             let attempt = 0;
 
             const tryEmit = () => {
                 attempt++;
 
-                this.socket.timeout(timeout).emit(event, data , (err: any, response: R) => {
+                this.socket.timeout(timeout).emit(event, data, (err: Error | null, ackValue: R) => {
                     if (!err) {
-                        resolve(response);
+                        resolve(true);
                         return;
                     }
 
