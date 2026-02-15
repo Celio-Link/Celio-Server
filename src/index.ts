@@ -5,9 +5,12 @@ import { SessionManager } from "./sessionManager.js";
 import {Client} from "./client.js";
 
 const httpServer = createServer();
+
 const io = new Server(httpServer, {
     cors: { origin: "*" },
     transports: ["websocket"], // 🚀 only WebSocket
+    pingInterval: 500,
+    pingTimeout: 2000
 });
 
 const sessionManager: SessionManager = new SessionManager();

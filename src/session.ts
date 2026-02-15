@@ -1,7 +1,7 @@
 import {CommandType, LinkStatus} from "./messages/gameboy.js";
 import {Client} from "./client.js";
-import {concatMap, Subject, Subscription} from "rxjs";
-import { v4 as uuidv4 } from 'uuid';
+import {concatMap, Observable, Subject, Subscription} from "rxjs";
+import {v4 as uuidv4} from 'uuid';
 
 type UInt16 = number & { __uint16: true };
 type DataArray = [UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16];
@@ -27,18 +27,26 @@ interface OutgoingAckablePacket {
     args?: any;
 }
 
+class ClientState {
+    public status: LinkStatus = LinkStatus.Empty;
+    public subscription: Subscription = new Subscription();
+    public packets: Map<number, DataPacket> = new Map();
+}
+
 export class Session {
 
-    private clientStatus: Map<Client, LinkStatus> = new Map();
+    private clientState: Map<Client, ClientState> = new Map();
+
     private masterSelected: boolean = false;
 
     private receivedStati: Set<string> = new Set();
-    private receivedDataPackets: Map<Client, Map<number, DataPacket>> = new Map();
+
     private clients: Client[] = [];
 
-    private subs: Subscription = new Subscription()
-
     private send$: Subject<OutgoingAckablePacket> = new Subject<OutgoingAckablePacket>();
+
+    private closeSubject: Subject<Session> = new Subject();
+    public close$: Observable<Session> = this.closeSubject.asObservable();
 
     private socketEventHandlers = {
 
@@ -52,7 +60,7 @@ export class Session {
         },
 
         deviceData: (client: Client, dataPacket: DataPacket) => {
-            let receivedPacketMap = this.receivedDataPackets.get(client)
+            let receivedPacketMap = this.clientState.get(client)?.packets
             if (!receivedPacketMap) {
                 console.log("Received data packet for unknown client");
                 return;
@@ -62,7 +70,7 @@ export class Session {
         },
 
         requestData: (client: Client, missingSequenceNumbers: [number]) => {
-            let receivedPacketMap = this.receivedDataPackets.get(client)
+            let receivedPacketMap = this.clientState.get(client)?.packets
             if (!receivedPacketMap) {
                 console.log("Received data packet for unknown client");
                 return;
@@ -87,6 +95,11 @@ export class Session {
         ).subscribe();
     }
 
+    moveSession(oldSession: Session) {
+        oldSession.clients.forEach(client => this.enter(client, true));
+        oldSession.clients.forEach(client => oldSession.clientState.get(client)?.subscription.unsubscribe());
+    }
+
     private makeCommand(command: CommandType) : CommandPacket {
         return {uuid: uuidv4(), command: command}
     }
@@ -94,22 +107,24 @@ export class Session {
     handleStatusMessage(client: Client, statusPacket: StatusPacket): void {
         console.log("Client " + client.id() + " has send status and was received by server. Status: " + LinkStatus[statusPacket.linkStatus]);
 
+        let clientState = this.clientState.get(client)!
+
         switch (statusPacket.linkStatus) {
-            case LinkStatus.HandshakeWaiting:
+            case LinkStatus.AwaitMode:
                 if (!this.masterSelected) {
-                    this.emitToOppositeSocket(client, "deviceCommand", this.makeCommand(CommandType.SetModeMaster))
+                    client.emit("deviceCommand", this.makeCommand(CommandType.SetModeMaster))
                     this.masterSelected = true;
                 }
                 else {
-                    this.emitToOppositeSocket(client,"deviceCommand", this.makeCommand(CommandType.SetModeSlave))
+                    client.emit("deviceCommand", this.makeCommand(CommandType.SetModeSlave))
                 }
                 break
 
             case LinkStatus.HandshakeReceived:
-                this.clientStatus.set(client, LinkStatus.HandshakeReceived);
+                clientState.status = LinkStatus.HandshakeReceived;
 
-                const allHandshakesReceived = [...this.clientStatus.values()]
-                    .every(status => status === LinkStatus.HandshakeReceived);
+                const allHandshakesReceived = [...this.clientState.values()]
+                    .every(state => state.status === LinkStatus.HandshakeReceived);
 
                 if (allHandshakesReceived) {
                     client.emit("deviceCommand", this.makeCommand(CommandType.StartHandshake))
@@ -118,16 +133,31 @@ export class Session {
                 break
 
             case LinkStatus.HandshakeFinished:
-                this.clientStatus.set(client, LinkStatus.HandshakeFinished);
+                clientState.status = LinkStatus.HandshakeFinished;
                 break
 
             case LinkStatus.LinkConnected:
-                this.clientStatus.set(client, LinkStatus.LinkConnected);
+                clientState.status = LinkStatus.LinkConnected;
                 this.emitToOppositeSocket(client, "deviceCommand", this.makeCommand(CommandType.ConnectLink))
                 break;
 
             case LinkStatus.LinkReconnecting:
-                this.clientStatus.set(client, LinkStatus.LinkReconnecting);
+                clientState.status = LinkStatus.LinkReconnecting;
+                break;
+
+            case LinkStatus.LinkClosed:
+                clientState.status = LinkStatus.LinkClosed;
+                const allLinksClosed = [...this.clientState.values()]
+                    .every(state => state.status === LinkStatus.LinkClosed);
+
+                if (allLinksClosed) {
+                    console.log("All links closed. Session closed.");
+                    setTimeout(() => {
+                        this.closeSubject.next(this);
+                        client.emit("sessionClose")
+                        this.emitToOppositeSocket(client,"sessionClose");
+                    }, 2000);
+                }
                 break;
         }
     }
@@ -144,31 +174,29 @@ export class Session {
         return this.clients.length === 0;
     }
 
-    enter(client: Client) : boolean {
+    enter(client: Client, move: boolean = false) : boolean {
         if (this.isFull()) {
             console.warn("Session is full");
             return false;
         }
         this.clients.push(client);
-        this.clientStatus.set(client, LinkStatus.Empty);
+        this.clientState.set(client, new ClientState());
         Object.entries(this.socketEventHandlers).forEach(([event, handler]) => {
-            this.subs.add(client.fromEvent<any>(event).subscribe((data: any) => handler(client, data)));
+            this.clientState.get(client)?.subscription.add(client.fromEvent<any>(event).subscribe((data: any) => handler(client, data)));
         });
-        this.emitToOppositeSocket(client, "partnerJoined");
-        this.receivedDataPackets.set(client, new Map());
+        if (!move) this.emitToOppositeSocket(client, "partnerJoined");
+
         return true;
     }
 
     leave(client: Client) {
-        console.log(this.clients[0].id())
         const index = this.clients.findIndex(clientToRemove => clientToRemove.id() === client.id());
-        console.log(index)
         if (index < 0){
             console.warn("Client " + client.id() + " tried to leave session but was not in one");
             return
         }
         this.emitToOppositeSocket(client, "partnerLeft");
-        this.subs.unsubscribe();
+        this.clientState.get(client)?.subscription.unsubscribe();
         this.clients.splice(index, 1);
         console.log("Client " + client.id() + " left session");
     }

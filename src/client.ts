@@ -22,6 +22,11 @@ export class Client {
         sessionLeft: () => {
             console.log('Client ' + this.clientId + ` tries to leave session`);
             this.sessionManager.leaveSession(this);
+        },
+
+        disconnect: () => {
+            console.warn('Client ' + this.clientId + ` disconnected`);
+            setTimeout(() => this.checkDisconnect(), 5000);
         }
     };
 
@@ -39,10 +44,19 @@ export class Client {
             socket.on(event, handler);
         });
         this.socket$.next(socket);
+        console.warn('Client ' + this.clientId + ` reconnected`);
     }
 
     id (): string {
         return this.clientId;
+    }
+
+    checkDisconnect() {
+        if (this.socket.disconnected){
+            this.sessionManager.leaveSession(this)
+            this.removeCb(this.clientId);
+        }
+        else console.warn('Client ' + this.clientId + ` recovered from disconnect`);
     }
 
     /**
