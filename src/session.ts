@@ -204,11 +204,11 @@ export class Session {
     emitToOppositeSocket(client: Client, event: string, arg?: any) {
         if (this.clients.length != 2) return;
         if (client.id() === this.clients[0].id()) {
-            console.log('Emitting to Client ' + this.clients[1].id() + ': ' + event);
+            //console.log('Emitting to Client ' + this.clients[1].id() + ': ' + event);
             this.clients[1].emit(event, arg);
         }
         else {
-            console.log('Emitting to Client ' + this.clients[0].id() + ': ' + event);
+            //console.log('Emitting to Client ' + this.clients[0].id() + ': ' + event);
             this.clients[0].emit(event, arg);
         }
     }
@@ -216,7 +216,7 @@ export class Session {
     emitAckedToOppositeSocket(client: Client, event: string, args?: any) {
         if (this.clients.length != 2) return;
         let receiverClient = this.clients[0] === client ? this.clients[1] : this.clients[0];
-        console.log('Emitting to Client ' + receiverClient.id() + ': ' + event + ' - ' +JSON.stringify(args));
+        //console.log('Emitting to Client ' + receiverClient.id() + ': ' + event + ' - ' +JSON.stringify(args));
         this.queueAckablePacket(receiverClient, event, args);
     }
 
