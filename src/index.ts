@@ -5,7 +5,7 @@ import { SessionManager } from "./sessionManager.js";
 import {Client} from "./client.js";
 
 const httpServer = createServer();
-const port = process.env.PORT || 3000;
+const port = 443;
 
 const io = new Server(httpServer, {
     cors: { origin: "*" },
