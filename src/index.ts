@@ -5,6 +5,7 @@ import { SessionManager } from "./sessionManager.js";
 import {Client} from "./client.js";
 
 const httpServer = createServer();
+const port = process.env.PORT || 3000;
 
 const io = new Server(httpServer, {
     cors: { origin: "*" },
@@ -28,6 +29,6 @@ io.on("connection", (socket: Socket) => {
     else clients.set(clientId, new Client(clientId, socket, sessionManager, removeClient));
 })
 
-httpServer.listen(8080, () => {
-    console.log(`Server listening on http://localhost:${8080}`);
+httpServer.listen(port, () => {
+    console.log(`Server listening on http://localhost:${port}`);
 });
