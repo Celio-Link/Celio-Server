@@ -4,7 +4,12 @@ import {concatMap, Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
 
 type UInt16 = number & { __uint16: true };
-type DataArray = [UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16];
+type DataArray = [
+    UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16,
+    UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16,
+    UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16,
+    UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16,
+];
 
 interface DataPacket {
     sequence: number;
