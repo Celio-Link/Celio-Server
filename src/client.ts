@@ -4,10 +4,11 @@ import {BehaviorSubject, fromEvent, Observable, switchMap} from 'rxjs';
 
 export class Client {
 
+    private currentlyInSession: boolean = false;
     private socket$: BehaviorSubject<Socket>;
     private eventHandlers = {
 
-        sessionCreate: (responseHandler: any) => {
+        sessionCreate: (sessionId: string, responseHandler: any) => {
             const sessionState = this.sessionManager.createSession(this);
             if (sessionState.isOk) console.log('Client ' + this.clientId + ` created session with id ` + sessionState.value.id);
             responseHandler(sessionState);
@@ -51,9 +52,13 @@ export class Client {
         return this.clientId;
     }
 
+    inSession(entered: boolean) {
+        return this.currentlyInSession = entered;
+    }
+
     checkDisconnect() {
         if (this.socket.disconnected){
-            this.sessionManager.leaveSession(this)
+            if (this.currentlyInSession) this.sessionManager.leaveSession(this)
             this.removeCb(this.clientId);
         }
         else console.warn('Client ' + this.clientId + ` recovered from disconnect`);
