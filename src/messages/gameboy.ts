@@ -1,5 +1,6 @@
 export enum LinkStatus {
     Empty = 0xFFFF,
+    AwaitModeEmulator = 0xFF01,
     AwaitMode = 0xFF02,
     HandshakeReceived = 0xFF03,
     HandshakeFinished = 0xFF04,

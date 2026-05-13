@@ -136,6 +136,10 @@ export class Session {
                 }
                 break
 
+            case LinkStatus.AwaitModeEmulator:
+                client.emit("deviceCommand", this.makeCommand(CommandType.SetModeSlave))
+                break
+
             case LinkStatus.HandshakeReceived:
                 clientState.status = LinkStatus.HandshakeReceived;
 
@@ -167,7 +171,7 @@ export class Session {
                     .every(state => state.status === LinkStatus.LinkClosed);
 
                 if (allLinksClosed) {
-                    console.log("All links closed. Session closed");
+                    console.log("All links closed. Session will be closed");
                     setTimeout(() => {
                         this.evict();
                     }, 2000);
