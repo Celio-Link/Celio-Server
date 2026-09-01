@@ -1,5 +1,4 @@
 import { Session } from "./session.js";
-import { nanoid } from "nanoid";
 import { Result } from 'true-myth';
 import { ok, err } from 'true-myth/result';
 import {Client} from "./client.js";
@@ -23,7 +22,13 @@ export class SessionManager {
 
     createSession(client: Client) :  Result<SessionState, ErrorType> {
         if (this.clientToSession.has(client)) return err(ErrorType.AlreadyExists);
-        const sessionId: string = nanoid();
+
+        let sessionId: string = ""
+        do {
+            const sessionIdRaw: number = Math.floor(Math.random() * 9999);
+            sessionId = sessionIdRaw.toString().padStart(4, "0");
+        } while (this.sessions.has(sessionId));
+
         const session = new Session(sessionId);
 
         session.close$
