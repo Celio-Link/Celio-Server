@@ -70,6 +70,7 @@ export class SessionManager {
             return;
         }
         session.leave(client);
+        this.clientToSession.delete(client);
     }
 
     private findSession(sessionId: string): Session | undefined {

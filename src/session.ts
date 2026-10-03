@@ -286,6 +286,7 @@ export class Session {
         this.clients.splice(index, 1);
         console.log("Client " + client.id() + " left session");
         client.inSession(false);
+        this.clientState.delete(client);
         if (this.isEmpty()) this.closeSubject.next(this);
     }
 
