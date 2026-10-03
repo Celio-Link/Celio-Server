@@ -3,7 +3,7 @@ import {Client} from "./client.js";
 import {concatMap, Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
 import {AckFn, isDataPacketBatch, isSequenceNumberList, isStatusPacket} from "./messages/validation.js";
-import {BatchSender} from "./batchSender.js";
+import {PipelinedSender} from "./pipelinedSender.js";
 
 type UInt16 = number & { __uint16: true };
 type DataArray = [
@@ -35,8 +35,8 @@ class ClientState {
     // Commands to this client, sent one by one in order and retried until acked
     public commands$: Subject<CommandPacket> = new Subject<CommandPacket>();
 
-    // Data packets to this client. Each receiver has its own queue, so a slow client only delays itself.
-    constructor(public dataSender: BatchSender<DataPacket>) {}
+    // Data packets to this client, one emit per item. Each receiver has its own sender, so a slow client only delays itself.
+    constructor(public dataSender: PipelinedSender<DataPacket[]>) {}
 }
 
 export class Session {
@@ -233,8 +233,8 @@ export class Session {
             return false;
         }
         this.clients.push(client);
-        const clientState = new ClientState(new BatchSender<DataPacket>(batch =>
-            client.emitWithRetry<boolean>("deviceData", batch)
+        const clientState = new ClientState(new PipelinedSender<DataPacket[]>(dataPackets =>
+            client.emitWithRetry<boolean>("deviceData", dataPackets)
                 .catch(err => {
                     console.error("Ack failed after retries:", err);
                     this.evict();
