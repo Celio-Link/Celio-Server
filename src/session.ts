@@ -2,7 +2,7 @@ import {CommandType, LinkStatus} from "./messages/gameboy.js";
 import {Client} from "./client.js";
 import {concatMap, Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
-import {isDataPacket, isSequenceNumberList, isStatusPacket} from "./messages/validation.js";
+import {AckFn, isDataPacket, isSequenceNumberList, isStatusPacket} from "./messages/validation.js";
 
 type UInt16 = number & { __uint16: true };
 type DataArray = [
@@ -65,33 +65,48 @@ export class Session {
      */
     public close$: Observable<Session> = this.closeSubject.asObservable();
 
-    private socketEventHandlers: Record<string, (client: Client, payload: unknown) => void> = {
+    /**
+     * Handlers for client events. Clients that emit with an ack callback retry until they get an answer,
+     * so duplicates are acknowledged again but not processed twice. The ack is false for rejected packets.
+     */
+    private socketEventHandlers: Record<string, (client: Client, payload: unknown, ack?: AckFn) => void> = {
 
-        deviceStatus: (client: Client, statusPacket: unknown) => {
+        deviceStatus: (client: Client, statusPacket: unknown, ack?: AckFn) => {
             if (!isStatusPacket(statusPacket)) {
                 console.warn("Client " + client.id() + " sent invalid status packet");
+                ack?.(false);
                 return;
             }
             if (this.receivedStati.has(statusPacket.uuid)) {
                 console.warn("Received duplicate status packet");
+                ack?.(true);
                 return;
             }
             this.receivedStati.add(statusPacket.uuid);
             this.handleStatusMessage(client, statusPacket as StatusPacket);
+            ack?.(true);
         },
 
-        deviceData: (client: Client, dataPacket: unknown) => {
+        deviceData: (client: Client, dataPacket: unknown, ack?: AckFn) => {
             if (!isDataPacket(dataPacket)) {
                 console.warn("Client " + client.id() + " sent invalid data packet");
+                ack?.(false);
                 return;
             }
             let receivedPacketMap = this.clientState.get(client)?.packets
             if (!receivedPacketMap) {
                 console.log("Received data packet for unknown client");
+                ack?.(false);
+                return;
+            }
+            if (receivedPacketMap.has(dataPacket.sequence)) {
+                console.warn("Client " + client.id() + " sent duplicate data packet " + dataPacket.sequence);
+                ack?.(true);
                 return;
             }
             receivedPacketMap.set(dataPacket.sequence, dataPacket as DataPacket);
             this.emitAckedToOppositeSocket(client, "deviceData", dataPacket);
+            ack?.(true);
         },
 
         requestData: (client: Client, missingSequenceNumbers: unknown) => {
@@ -233,9 +248,9 @@ export class Session {
         this.clients.push(client);
         this.clientState.set(client, new ClientState());
         Object.entries(this.socketEventHandlers).forEach(([event, handler]) => {
-            this.clientState.get(client)?.subscription.add(client.fromEvent<unknown>(event).subscribe((data: unknown) => {
+            this.clientState.get(client)?.subscription.add(client.fromEventWithAck(event).subscribe(({data, ack}) => {
                 try {
-                    handler(client, data);
+                    handler(client, data, ack);
                 } catch (e) {
                     console.error("Session " + this.sessionId + " failed to handle event " + event + ":", e);
                 }

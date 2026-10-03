@@ -1,8 +1,8 @@
 import {Socket} from "socket.io";
 import {ErrorType, SessionManager} from "./sessionManager.js";
-import {BehaviorSubject, fromEvent, Observable, switchMap} from 'rxjs';
+import {BehaviorSubject, Observable, switchMap} from 'rxjs';
 import {err} from 'true-myth/result';
-import {isAckFn, isSessionId} from "./messages/validation.js";
+import {AckFn, isAckFn, isSessionId} from "./messages/validation.js";
 
 export class Client {
 
@@ -88,12 +88,17 @@ export class Client {
     }
 
     /**
-     * Create an observable from a socket.io event.
+     * Create an observable from a socket.io event, including the ack callback if the client requested one.
+     * Survives reconnects by switching to the latest socket.
      * @param event - The name of the event to listen for.
      */
-    fromEvent<T>(event: string): Observable<T> {
+    fromEventWithAck(event: string): Observable<{ data: unknown, ack?: AckFn }> {
         return this.socket$.pipe(
-            switchMap((socket: Socket) => fromEvent<T>(socket, event))
+            switchMap((socket: Socket) => new Observable<{ data: unknown, ack?: AckFn }>(observer => {
+                const handler = (data: unknown, ack?: unknown) => observer.next({data, ack: isAckFn(ack) ? ack : undefined});
+                socket.on(event, handler);
+                return () => { socket.off(event, handler); };
+            }))
         );
     }
 
