@@ -89,7 +89,7 @@ export class Client {
 
     /**
      * Create an observable from a socket.io event, including the ack callback if the client requested one.
-     * Survives reconnects by switching to the latest socket.
+     * Survives reconnecting by switching to the latest socket.
      * @param event - The name of the event to listen for.
      */
     fromEventWithAck(event: string): Observable<{ data: unknown, ack?: AckFn }> {
