@@ -1,8 +1,9 @@
 import {CommandType, LinkStatus} from "./messages/gameboy.js";
 import {Client} from "./client.js";
-import {concatMap, Observable, Subject, Subscription} from "rxjs";
+import {Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
-import {AckFn, isDataPacket, isSequenceNumberList, isStatusPacket} from "./messages/validation.js";
+import {AckFn, isDataPacketBatch, isSequenceNumberList, isStatusPacket} from "./messages/validation.js";
+import {BatchSender} from "./batchSender.js";
 
 type UInt16 = number & { __uint16: true };
 type DataArray = [
@@ -27,17 +28,13 @@ interface StatusPacket {
     linkStatus: LinkStatus;
 }
 
-interface OutgoingAckablePacket {
-    event: string;
-    args?: any;
-}
-
 class ClientState {
     public status: LinkStatus = LinkStatus.Empty;
     public subscription: Subscription = new Subscription();
     public packets: Map<number, DataPacket> = new Map();
-    // Ackable packets to this client. Each receiver has its own queue, so a slow client only delays itself.
-    public send$: Subject<OutgoingAckablePacket> = new Subject<OutgoingAckablePacket>();
+
+    // Data packets to this client. Each receiver has its own queue, so a slow client only delays itself.
+    constructor(public dataSender: BatchSender<DataPacket>) {}
 }
 
 export class Session {
@@ -84,9 +81,9 @@ export class Session {
             ack?.(true);
         },
 
-        deviceData: (client: Client, dataPacket: unknown, ack?: AckFn) => {
-            if (!isDataPacket(dataPacket)) {
-                console.warn("Client " + client.id() + " sent invalid data packet");
+        deviceData: (client: Client, dataPackets: unknown, ack?: AckFn) => {
+            if (!isDataPacketBatch(dataPackets)) {
+                console.warn("Client " + client.id() + " sent invalid data packets");
                 ack?.(false);
                 return;
             }
@@ -96,13 +93,16 @@ export class Session {
                 ack?.(false);
                 return;
             }
-            if (receivedPacketMap.has(dataPacket.sequence)) {
-                console.warn("Client " + client.id() + " sent duplicate data packet " + dataPacket.sequence);
-                ack?.(true);
-                return;
+            const newPackets: DataPacket[] = [];
+            for (const dataPacket of dataPackets as DataPacket[]) {
+                if (receivedPacketMap.has(dataPacket.sequence)) {
+                    console.warn("Client " + client.id() + " sent duplicate data packet " + dataPacket.sequence);
+                    continue;
+                }
+                receivedPacketMap.set(dataPacket.sequence, dataPacket);
+                newPackets.push(dataPacket);
             }
-            receivedPacketMap.set(dataPacket.sequence, dataPacket as DataPacket);
-            this.emitAckedToOppositeSocket(client, "deviceData", dataPacket);
+            this.sendDataToOppositeClient(client, newPackets);
             ack?.(true);
         },
 
@@ -118,7 +118,7 @@ export class Session {
             }
             missingSequenceNumbers.forEach(seqNum => {
                 let packet = receivedPacketMap.get(seqNum)
-                if (packet) client.emit("deviceData", packet)
+                if (packet) client.emit("deviceData", [packet])
                 else console.log("Requested data packet " + seqNum + " not found")
             })
         }
@@ -231,18 +231,15 @@ export class Session {
             return false;
         }
         this.clients.push(client);
-        const clientState = new ClientState();
+        const clientState = new ClientState(new BatchSender<DataPacket>(batch =>
+            client.emitWithRetry<boolean>("deviceData", batch)
+                .catch(err => {
+                    console.error("Ack failed after retries:", err);
+                    this.evict();
+                })
+        ));
         this.clientState.set(client, clientState);
-        clientState.subscription.add(clientState.send$.pipe(
-            concatMap((packet: OutgoingAckablePacket) =>
-                client.emitWithRetry<boolean>(packet.event, packet.args)
-                    .catch(err => {
-                        console.error("Ack failed after retries:", err);
-                        this.evict();
-                        return Promise.resolve();
-                    })
-            )
-        ).subscribe());
+        clientState.subscription.add(() => clientState.dataSender.close());
         Object.entries(this.socketEventHandlers).forEach(([event, handler]) => {
             this.clientState.get(client)?.subscription.add(client.fromEventWithAck(event).subscribe(({data, ack}) => {
                 try {
@@ -319,26 +316,13 @@ export class Session {
     }
 
     /**
-     * Emit an event to the opposite socket of the given client. Save to call when only one client is in the session.
+     * Queue data packets for the opposite client of the given client. Save to call when only one client is in the session.
      * @param client
-     * @param event
-     * @param arg
+     * @param dataPackets
      */
-    private emitAckedToOppositeSocket(client: Client, event: string, args?: any) {
-        if (this.clients.length != 2) return;
+    private sendDataToOppositeClient(client: Client, dataPackets: DataPacket[]) {
+        if (this.clients.length != 2 || dataPackets.length === 0) return;
         let receiverClient = this.clients[0] === client ? this.clients[1] : this.clients[0];
-        //console.log('Emitting to Client ' + receiverClient.id() + ': ' + event + ' - ' +JSON.stringify(args));
-        this.queueAckablePacket(receiverClient, event, args);
-    }
-
-    /**
-     * Queue and ackable Event to preserve order.
-     * @param client
-     * @param event
-     * @param args
-     * @private
-     */
-    private queueAckablePacket(client: Client, event: string, args?: any) {
-        this.clientState.get(client)?.send$.next({event: event, args: args});
+        this.clientState.get(receiverClient)?.dataSender.push(dataPackets);
     }
 }
