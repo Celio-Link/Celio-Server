@@ -1,6 +1,6 @@
 import {CommandType, LinkStatus} from "./messages/gameboy.js";
 import {Client} from "./client.js";
-import {Observable, Subject, Subscription} from "rxjs";
+import {concatMap, Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
 import {AckFn, isDataPacketBatch, isSequenceNumberList, isStatusPacket} from "./messages/validation.js";
 import {BatchSender} from "./batchSender.js";
@@ -32,6 +32,8 @@ class ClientState {
     public status: LinkStatus = LinkStatus.Empty;
     public subscription: Subscription = new Subscription();
     public packets: Map<number, DataPacket> = new Map();
+    // Commands to this client, sent one by one in order and retried until acked
+    public commands$: Subject<CommandPacket> = new Subject<CommandPacket>();
 
     // Data packets to this client. Each receiver has its own queue, so a slow client only delays itself.
     constructor(public dataSender: BatchSender<DataPacket>) {}
@@ -145,16 +147,16 @@ export class Session {
         switch (statusPacket.linkStatus) {
             case LinkStatus.AwaitMode:
                 if (!this.masterSelected) {
-                    client.emit("deviceCommand", this.makeCommand(CommandType.SetModeMaster))
+                    this.sendCommand(client, CommandType.SetModeMaster);
                     this.masterSelected = true;
                 }
                 else {
-                    client.emit("deviceCommand", this.makeCommand(CommandType.SetModeSlave))
+                    this.sendCommand(client, CommandType.SetModeSlave);
                 }
                 break
 
             case LinkStatus.AwaitModeEmulator:
-                client.emit("deviceCommand", this.makeCommand(CommandType.SetModeSlave))
+                this.sendCommand(client, CommandType.SetModeSlave);
                 break
 
             case LinkStatus.HandshakeReceived:
@@ -164,8 +166,8 @@ export class Session {
                     .every(state => state.status === LinkStatus.HandshakeReceived);
 
                 if (allHandshakesReceived) {
-                    client.emit("deviceCommand", this.makeCommand(CommandType.StartHandshake))
-                    this.emitToOppositeSocket(client,"deviceCommand", this.makeCommand(CommandType.StartHandshake));
+                    this.sendCommand(client, CommandType.StartHandshake);
+                    this.sendCommandToOppositeClient(client, CommandType.StartHandshake);
                 }
                 break
 
@@ -175,7 +177,7 @@ export class Session {
 
             case LinkStatus.LinkConnected:
                 clientState.status = LinkStatus.LinkConnected;
-                this.emitToOppositeSocket(client, "deviceCommand", this.makeCommand(CommandType.ConnectLink))
+                this.sendCommandToOppositeClient(client, CommandType.ConnectLink);
                 break;
 
             case LinkStatus.LinkReconnecting:
@@ -240,6 +242,15 @@ export class Session {
         ));
         this.clientState.set(client, clientState);
         clientState.subscription.add(() => clientState.dataSender.close());
+        clientState.subscription.add(clientState.commands$.pipe(
+            concatMap((command: CommandPacket) =>
+                client.emitWithRetry<boolean>("deviceCommand", command)
+                    .catch(err => {
+                        console.error("Command ack failed after retries:", err);
+                        this.evict();
+                    })
+            )
+        ).subscribe());
         Object.entries(this.socketEventHandlers).forEach(([event, handler]) => {
             this.clientState.get(client)?.subscription.add(client.fromEventWithAck(event).subscribe(({data, ack}) => {
                 try {
@@ -313,6 +324,27 @@ export class Session {
             console.log('Emitting to Client ' + this.clients[0].id() + ': ' + event);
             this.clients[0].emit(event, arg);
         }
+    }
+
+    /**
+     * Queue a command for the given client.
+     * @param client
+     * @param command
+     */
+    private sendCommand(client: Client, command: CommandType) {
+        console.log('Sending command to Client ' + client.id() + ': ' + CommandType[command]);
+        this.clientState.get(client)?.commands$.next(this.makeCommand(command));
+    }
+
+    /**
+     * Queue a command for the opposite client of the given client. Save to call when only one client is in the session.
+     * @param client
+     * @param command
+     */
+    private sendCommandToOppositeClient(client: Client, command: CommandType) {
+        if (this.clients.length != 2) return;
+        let receiverClient = this.clients[0] === client ? this.clients[1] : this.clients[0];
+        this.sendCommand(receiverClient, command);
     }
 
     /**
