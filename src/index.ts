@@ -3,6 +3,7 @@ import { createServer } from "http";
 import { Server, Socket } from "socket.io";
 import { SessionManager } from "./sessionManager.js";
 import {Client} from "./client.js";
+import {isClientId} from "./messages/validation.js";
 
 const httpServer = createServer();
 const port = 443;
@@ -23,7 +24,12 @@ function removeClient(clientId: string) {
 }
 
 io.on("connection", (socket: Socket) => {
-    let clientId: string = socket.handshake.auth.clientId;
+    const clientId: unknown = socket.handshake.auth?.clientId;
+    if (!isClientId(clientId)) {
+        console.warn("Rejected connection with invalid clientId");
+        socket.disconnect(true);
+        return;
+    }
     console.log("auth received:", clientId);
     if (clients.has(clientId)) clients.get(clientId)!.reconnect(socket);
     else clients.set(clientId, new Client(clientId, socket, sessionManager, removeClient));

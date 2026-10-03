@@ -1,20 +1,35 @@
 import {Socket} from "socket.io";
-import {SessionManager} from "./sessionManager.js";
+import {ErrorType, SessionManager} from "./sessionManager.js";
 import {BehaviorSubject, fromEvent, Observable, switchMap} from 'rxjs';
+import {err} from 'true-myth/result';
+import {isAckFn, isSessionId} from "./messages/validation.js";
 
 export class Client {
 
     private currentlyInSession: boolean = false;
     private socket$: BehaviorSubject<Socket>;
-    private eventHandlers = {
+    private eventHandlers: Record<string, (...args: unknown[]) => void> = {
 
-        sessionCreate: (sessionId: string, responseHandler: any) => {
+        sessionCreate: (_: unknown, responseHandler: unknown) => {
+            if (!isAckFn(responseHandler)) {
+                console.warn('Client ' + this.clientId + ' sent sessionCreate without ack callback');
+                return;
+            }
             const sessionState = this.sessionManager.createSession(this);
             if (sessionState.isOk) console.log('Client ' + this.clientId + ` created session with id ` + sessionState.value.id);
             responseHandler(sessionState);
         },
 
-        sessionJoin: (sessionId: string, responseHandler: any) => {
+        sessionJoin: (sessionId: unknown, responseHandler: unknown) => {
+            if (!isAckFn(responseHandler)) {
+                console.warn('Client ' + this.clientId + ' sent sessionJoin without ack callback');
+                return;
+            }
+            if (!isSessionId(sessionId)) {
+                console.warn('Client ' + this.clientId + ' sent sessionJoin with invalid session id');
+                responseHandler(err(ErrorType.InvalidRequest));
+                return;
+            }
             console.log(this.clientId + ` Client wants to join session ` + sessionId);
             const sessionState = this.sessionManager.enterSession(this, sessionId);
             responseHandler(sessionState);
@@ -33,19 +48,27 @@ export class Client {
 
     constructor(private clientId: string, private socket: Socket, private sessionManager: SessionManager,
                 private removeCb: (clientId: string) => void) {
-        Object.entries(this.eventHandlers).forEach(([event, handler]) => {
-            socket.on(event, handler);
-        });
+        this.registerEventHandlers(socket);
         this.socket$ = new BehaviorSubject(socket);
     }
 
     reconnect(socket: Socket) {
         this.socket = socket;
-        Object.entries(this.eventHandlers).forEach(([event, handler]) => {
-            socket.on(event, handler);
-        });
+        this.registerEventHandlers(socket);
         this.socket$.next(socket);
         console.warn('Client ' + this.clientId + ` reconnected`);
+    }
+
+    private registerEventHandlers(socket: Socket) {
+        Object.entries(this.eventHandlers).forEach(([event, handler]) => {
+            socket.on(event, (...args: unknown[]) => {
+                try {
+                    handler(...args);
+                } catch (e) {
+                    console.error('Client ' + this.clientId + ` failed to handle event ` + event + ':', e);
+                }
+            });
+        });
     }
 
     id (): string {

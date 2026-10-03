@@ -4,7 +4,8 @@ import { ok, err } from 'true-myth/result';
 import {Client} from "./client.js";
 import {take} from "rxjs";
 
-enum ErrorType {
+export enum ErrorType {
+    InvalidRequest = "Invalid request",
     NotFound = "Session not found",
     AlreadyExists = "Session already exists",
     SessionFull = "Session is full",

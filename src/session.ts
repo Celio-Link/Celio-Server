@@ -2,6 +2,7 @@ import {CommandType, LinkStatus} from "./messages/gameboy.js";
 import {Client} from "./client.js";
 import {concatMap, Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
+import {isDataPacket, isSequenceNumberList, isStatusPacket} from "./messages/validation.js";
 
 type UInt16 = number & { __uint16: true };
 type DataArray = [
@@ -64,28 +65,40 @@ export class Session {
      */
     public close$: Observable<Session> = this.closeSubject.asObservable();
 
-    private socketEventHandlers = {
+    private socketEventHandlers: Record<string, (client: Client, payload: unknown) => void> = {
 
-        deviceStatus: (client: Client, statusPacket: StatusPacket) => {
+        deviceStatus: (client: Client, statusPacket: unknown) => {
+            if (!isStatusPacket(statusPacket)) {
+                console.warn("Client " + client.id() + " sent invalid status packet");
+                return;
+            }
             if (this.receivedStati.has(statusPacket.uuid)) {
                 console.warn("Received duplicate status packet");
                 return;
             }
             this.receivedStati.add(statusPacket.uuid);
-            this.handleStatusMessage(client, statusPacket);
+            this.handleStatusMessage(client, statusPacket as StatusPacket);
         },
 
-        deviceData: (client: Client, dataPacket: DataPacket) => {
+        deviceData: (client: Client, dataPacket: unknown) => {
+            if (!isDataPacket(dataPacket)) {
+                console.warn("Client " + client.id() + " sent invalid data packet");
+                return;
+            }
             let receivedPacketMap = this.clientState.get(client)?.packets
             if (!receivedPacketMap) {
                 console.log("Received data packet for unknown client");
                 return;
             }
-            receivedPacketMap.set(dataPacket.sequence, dataPacket);
+            receivedPacketMap.set(dataPacket.sequence, dataPacket as DataPacket);
             this.emitAckedToOppositeSocket(client, "deviceData", dataPacket);
         },
 
-        requestData: (client: Client, missingSequenceNumbers: [number]) => {
+        requestData: (client: Client, missingSequenceNumbers: unknown) => {
+            if (!isSequenceNumberList(missingSequenceNumbers)) {
+                console.warn("Client " + client.id() + " sent invalid data request");
+                return;
+            }
             let receivedPacketMap = this.clientState.get(client)?.packets
             if (!receivedPacketMap) {
                 console.log("Received data packet for unknown client");
@@ -220,7 +233,13 @@ export class Session {
         this.clients.push(client);
         this.clientState.set(client, new ClientState());
         Object.entries(this.socketEventHandlers).forEach(([event, handler]) => {
-            this.clientState.get(client)?.subscription.add(client.fromEvent<any>(event).subscribe((data: any) => handler(client, data)));
+            this.clientState.get(client)?.subscription.add(client.fromEvent<unknown>(event).subscribe((data: unknown) => {
+                try {
+                    handler(client, data);
+                } catch (e) {
+                    console.error("Session " + this.sessionId + " failed to handle event " + event + ":", e);
+                }
+            }));
         });
         this.emitToOppositeSocket(client, "partnerJoined");
         client.inSession(true)
