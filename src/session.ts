@@ -28,7 +28,6 @@ interface StatusPacket {
 }
 
 interface OutgoingAckablePacket {
-    client: Client;
     event: string;
     args?: any;
 }
@@ -37,6 +36,8 @@ class ClientState {
     public status: LinkStatus = LinkStatus.Empty;
     public subscription: Subscription = new Subscription();
     public packets: Map<number, DataPacket> = new Map();
+    // Ackable packets to this client. Each receiver has its own queue, so a slow client only delays itself.
+    public send$: Subject<OutgoingAckablePacket> = new Subject<OutgoingAckablePacket>();
 }
 
 export class Session {
@@ -49,13 +50,9 @@ export class Session {
 
     private clients: Client[] = [];
 
-    private send$: Subject<OutgoingAckablePacket> = new Subject<OutgoingAckablePacket>();
-
     private started: boolean = false;
 
     private closeSubject: Subject<Session> = new Subject();
-
-    private ackablePacketSubscription: Subscription;
 
     /**
      * Observable that emits when one of the following events occurs:
@@ -127,19 +124,7 @@ export class Session {
         }
     };
 
-    constructor(private sessionId: string) {
-        this.ackablePacketSubscription = this.send$.pipe(
-            concatMap((packet: OutgoingAckablePacket) =>
-                packet.client.emitWithRetry<boolean>(packet.event, packet.args)
-                    .catch(err => {
-                        console.error("Ack failed after retries:", err);
-                        this.ackablePacketSubscription.unsubscribe()
-                        this.evict();
-                        return Promise.resolve();
-                    })
-            )
-        ).subscribe();
-    }
+    constructor(private sessionId: string) {}
 
     /**
      * Check if the session has started, meaning the first status packet has been received.
@@ -246,7 +231,18 @@ export class Session {
             return false;
         }
         this.clients.push(client);
-        this.clientState.set(client, new ClientState());
+        const clientState = new ClientState();
+        this.clientState.set(client, clientState);
+        clientState.subscription.add(clientState.send$.pipe(
+            concatMap((packet: OutgoingAckablePacket) =>
+                client.emitWithRetry<boolean>(packet.event, packet.args)
+                    .catch(err => {
+                        console.error("Ack failed after retries:", err);
+                        this.evict();
+                        return Promise.resolve();
+                    })
+            )
+        ).subscribe());
         Object.entries(this.socketEventHandlers).forEach(([event, handler]) => {
             this.clientState.get(client)?.subscription.add(client.fromEventWithAck(event).subscribe(({data, ack}) => {
                 try {
@@ -342,6 +338,6 @@ export class Session {
      * @private
      */
     private queueAckablePacket(client: Client, event: string, args?: any) {
-        this.send$.next({client: client, event: event, args: args});
+        this.clientState.get(client)?.send$.next({event: event, args: args});
     }
 }
