@@ -287,26 +287,25 @@ export class Session {
      */
     private evict() {
         for (let i = this.clients.length - 1; i >= 0; i--) {
-            this.clients[i].emit("sessionClose")
+            this.clients[i].emitSessionEvent("sessionClose");
             this.removeClient(this.clients[i]);
         }
     }
 
     /**
-     * Emit an event to the opposite socket of the given client. Save to call when only one client is in the session.
+     * Send a session event to the opposite client of the given client. Save to call when only one client is in the session.
      * @param client
      * @param event
-     * @param arg
      */
-    private emitToOppositeSocket(client: Client, event: string, arg?: any) {
+    private emitToOppositeSocket(client: Client, event: string) {
         if (this.clients.length != 2) return;
         if (client.id() === this.clients[0].id()) {
             console.log('Emitting to Client ' + this.clients[1].id() + ': ' + event);
-            this.clients[1].emit(event, arg);
+            this.clients[1].emitSessionEvent(event);
         }
         else {
             console.log('Emitting to Client ' + this.clients[0].id() + ': ' + event);
-            this.clients[0].emit(event, arg);
+            this.clients[0].emitSessionEvent(event);
         }
     }
 

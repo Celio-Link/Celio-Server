@@ -1,6 +1,7 @@
 import {Socket} from "socket.io";
 import {ErrorType, SessionManager} from "./sessionManager.js";
-import {BehaviorSubject, Observable, switchMap} from 'rxjs';
+import {BehaviorSubject, concatMap, Observable, Subject, switchMap} from 'rxjs';
+import {v4 as uuidv4} from 'uuid';
 import {err} from 'true-myth/result';
 import {AckFn, isAckFn, isSessionId} from "./messages/validation.js";
 
@@ -9,6 +10,7 @@ export class Client {
     private currentlyInSession: boolean = false;
     private socket$: BehaviorSubject<Socket>;
     private disconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    private sessionEvents$: Subject<string> = new Subject<string>();
     private eventHandlers: Record<string, (...args: unknown[]) => void> = {
 
         sessionCreate: (_: unknown, responseHandler: unknown) => {
@@ -56,6 +58,12 @@ export class Client {
                 private removeCb: (clientId: string) => void) {
         this.registerEventHandlers(socket);
         this.socket$ = new BehaviorSubject(socket);
+        this.sessionEvents$.pipe(
+            concatMap((event: string) =>
+                this.emitWithRetry<boolean>(event, {uuid: uuidv4()})
+                    .catch(err => console.error('Client ' + this.clientId + ' did not ack ' + event + ':', err))
+            )
+        ).subscribe();
     }
 
     reconnect(socket: Socket) {
@@ -111,12 +119,11 @@ export class Client {
     }
 
     /**
-     * Emit an event to the client.
+     * Send a session event to the client, retried until acked. The event carries a uuid to filter duplicates.
      * @param event - The name of the event to emit.
-     * @param arg - Optional arguments to pass to the event handler.
      */
-    emit(event: string, arg?: any) {
-        this.socket.emit(event, arg);
+    emitSessionEvent(event: string) {
+        this.sessionEvents$.next(event);
     }
 
     /**
