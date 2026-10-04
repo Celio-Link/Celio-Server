@@ -8,6 +8,7 @@ export class Client {
 
     private currentlyInSession: boolean = false;
     private socket$: BehaviorSubject<Socket>;
+    private disconnectTimer: ReturnType<typeof setTimeout> | undefined;
     private eventHandlers: Record<string, (...args: unknown[]) => void> = {
 
         sessionCreate: (_: unknown, responseHandler: unknown) => {
@@ -42,7 +43,12 @@ export class Client {
 
         disconnect: () => {
             console.log('Client ' + this.clientId + ` disconnected`);
-            setTimeout(() => this.checkDisconnect(), 5000);
+            // Only the latest disconnect counts, a reconnect cancels the timer
+            clearTimeout(this.disconnectTimer);
+            this.disconnectTimer = setTimeout(() => {
+                this.disconnectTimer = undefined;
+                this.checkDisconnect();
+            }, 5000);
         }
     };
 
@@ -53,6 +59,8 @@ export class Client {
     }
 
     reconnect(socket: Socket) {
+        clearTimeout(this.disconnectTimer);
+        this.disconnectTimer = undefined;
         this.socket = socket;
         this.registerEventHandlers(socket);
         this.socket$.next(socket);
