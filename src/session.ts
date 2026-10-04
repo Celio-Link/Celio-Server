@@ -2,7 +2,7 @@ import {CommandType, LinkStatus} from "./messages/gameboy.js";
 import {Client} from "./client.js";
 import {concatMap, Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
-import {AckFn, isDataPacketBatch, isSequenceNumberList, isStatusPacket} from "./messages/validation.js";
+import {AckFn, isDataPacketBatch, isStatusPacket} from "./messages/validation.js";
 import {PipelinedSender} from "./pipelinedSender.js";
 
 type UInt16 = number & { __uint16: true };
@@ -31,7 +31,8 @@ interface StatusPacket {
 class ClientState {
     public status: LinkStatus = LinkStatus.Empty;
     public subscription: Subscription = new Subscription();
-    public packets: Map<number, DataPacket> = new Map();
+    // Sequence numbers of data packets received from this client, to drop duplicates from retries
+    public receivedSequences: Set<number> = new Set();
     // Commands to this client, sent one by one in order and retried until acked
     public commands$: Subject<CommandPacket> = new Subject<CommandPacket>();
 
@@ -89,40 +90,23 @@ export class Session {
                 ack?.(false);
                 return;
             }
-            let receivedPacketMap = this.clientState.get(client)?.packets
-            if (!receivedPacketMap) {
+            let receivedSequences = this.clientState.get(client)?.receivedSequences
+            if (!receivedSequences) {
                 console.log("Received data packet for unknown client");
                 ack?.(false);
                 return;
             }
             const newPackets: DataPacket[] = [];
             for (const dataPacket of dataPackets as DataPacket[]) {
-                if (receivedPacketMap.has(dataPacket.sequence)) {
+                if (receivedSequences.has(dataPacket.sequence)) {
                     console.warn("Client " + client.id() + " sent duplicate data packet " + dataPacket.sequence);
                     continue;
                 }
-                receivedPacketMap.set(dataPacket.sequence, dataPacket);
+                receivedSequences.add(dataPacket.sequence);
                 newPackets.push(dataPacket);
             }
             this.sendDataToOppositeClient(client, newPackets);
             ack?.(true);
-        },
-
-        requestData: (client: Client, missingSequenceNumbers: unknown) => {
-            if (!isSequenceNumberList(missingSequenceNumbers)) {
-                console.warn("Client " + client.id() + " sent invalid data request");
-                return;
-            }
-            let receivedPacketMap = this.clientState.get(client)?.packets
-            if (!receivedPacketMap) {
-                console.log("Received data packet for unknown client");
-                return;
-            }
-            missingSequenceNumbers.forEach(seqNum => {
-                let packet = receivedPacketMap.get(seqNum)
-                if (packet) client.emit("deviceData", [packet])
-                else console.log("Requested data packet " + seqNum + " not found")
-            })
         }
     };
 

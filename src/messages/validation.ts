@@ -4,7 +4,6 @@
  */
 
 export const DATA_ARRAY_LENGTH = 32;
-const MAX_REQUESTED_SEQUENCES = 256;
 const MAX_DATA_BATCH_SIZE = 1024;
 
 export type AckFn = (response: unknown) => void;
@@ -56,10 +55,4 @@ export function isDataPacketBatch(value: unknown): value is { sequence: number, 
         && value.length > 0
         && value.length <= MAX_DATA_BATCH_SIZE
         && value.every(isDataPacket);
-}
-
-export function isSequenceNumberList(value: unknown): value is number[] {
-    return Array.isArray(value)
-        && value.length <= MAX_REQUESTED_SEQUENCES
-        && value.every(isSequenceNumber);
 }
