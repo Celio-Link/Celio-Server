@@ -1,5 +1,5 @@
 import {CommandType, LinkStatus} from "./messages/gameboy.js";
-import {Client} from "./client.js";
+import {Client, ClientDisconnectedError} from "./client.js";
 import {concatMap, Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
 import {AckFn, isDataPacketBatch, isStatusPacket} from "./messages/validation.js";
@@ -220,6 +220,7 @@ export class Session {
         const clientState = new ClientState(new PipelinedSender<DataPacket[]>(dataPackets =>
             client.emitWithRetry<boolean>("deviceData", dataPackets)
                 .catch(err => {
+                    if (err instanceof ClientDisconnectedError) return;
                     console.error("Ack failed after retries:", err);
                     this.evict();
                 })
@@ -230,6 +231,7 @@ export class Session {
             concatMap((command: CommandPacket) =>
                 client.emitWithRetry<boolean>("deviceCommand", command)
                     .catch(err => {
+                        if (err instanceof ClientDisconnectedError) return;
                         console.error("Command ack failed after retries:", err);
                         this.evict();
                     })
@@ -261,7 +263,8 @@ export class Session {
         }
         if (this.isFull() && this.hasStarted())
         {
-            this.evict()
+            this.removeClient(client);
+            this.evict();
         } else {
             this.emitToOppositeSocket(client, "partnerLeft");
             this.removeClient(client);

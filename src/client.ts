@@ -5,6 +5,17 @@ import {v4 as uuidv4} from 'uuid';
 import {err} from 'true-myth/result';
 import {AckFn, isAckFn, isSessionId} from "./messages/validation.js";
 
+/**
+ * An emit ran out of retries because the client is disconnected. Removing the client is up to the disconnect
+ * handling, so this is no error of its own.
+ */
+export class ClientDisconnectedError extends Error {
+    constructor() {
+        super("Client disconnected");
+        this.name = "ClientDisconnectedError";
+    }
+}
+
 export class Client {
 
     private currentlyInSession: boolean = false;
@@ -61,7 +72,10 @@ export class Client {
         this.sessionEvents$.pipe(
             concatMap((event: string) =>
                 this.emitWithRetry<boolean>(event, {uuid: uuidv4()})
-                    .catch(err => console.error('Client ' + this.clientId + ' did not ack ' + event + ':', err))
+                    .catch(err => {
+                        if (err instanceof ClientDisconnectedError) return;
+                        console.error('Client ' + this.clientId + ' did not ack ' + event + ':', err);
+                    })
             )
         ).subscribe();
     }
@@ -152,7 +166,7 @@ export class Client {
                     }
 
                     if (attempt > retries) {
-                        reject(new Error("Max retries reached"));
+                        reject(this.socket.connected ? new Error("Max retries reached") : new ClientDisconnectedError());
                         return;
                     }
 
