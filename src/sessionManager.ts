@@ -21,7 +21,7 @@ export class SessionManager {
     private sessions: Map<string, Session> = new Map();
     private clientToSession: Map<Client, string> = new Map();
 
-    createSession(client: Client) :  Result<SessionState, ErrorType> {
+    createSession(client: Client, playerNumber: number) :  Result<SessionState, ErrorType> {
         if (this.clientToSession.has(client)) return err(ErrorType.AlreadyExists);
 
         let sessionId: string = ""
@@ -30,7 +30,7 @@ export class SessionManager {
             sessionId = sessionIdRaw.toString().padStart(4, "0");
         } while (this.sessions.has(sessionId));
 
-        const session = new Session(sessionId);
+        const session = new Session(sessionId, playerNumber);
 
         session.close$
             .pipe(take(1))

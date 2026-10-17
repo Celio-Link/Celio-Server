@@ -20,6 +20,10 @@ function isSequenceNumber(value: unknown): value is number {
     return Number.isSafeInteger(value) && (value as number) >= 0;
 }
 
+export function isPlayerNumber(value: unknown): value is number {
+    return Number.isSafeInteger(value) && (value as number) <= 4;
+}
+
 export function isAckFn(value: unknown): value is AckFn {
     return typeof value === "function";
 }

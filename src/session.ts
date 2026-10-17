@@ -1,26 +1,26 @@
-import {CommandType, LinkStatus} from "./messages/gameboy.js";
+import {CommandArgs, CommandPacket, CommandType, LinkStatus, SendableCommand} from "./messages/gameboy.js";
 import {Client, ClientDisconnectedError} from "./client.js";
 import {concatMap, Observable, Subject, Subscription} from "rxjs";
 import {v4 as uuidv4} from 'uuid';
 import {AckFn, isDataPacketBatch, isStatusPacket} from "./messages/validation.js";
 import {PipelinedSender} from "./pipelinedSender.js";
 
-type UInt16 = number & { __uint16: true };
-type DataArray = [
-    UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16,
-    UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16,
-    UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16,
-    UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16, UInt16,
+export type UInt8 = number & { __uint8: true };
+export type DataArray = [
+    UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+    UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+    UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+    UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+    UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+    UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8, UInt8,
+    UInt8, UInt8, UInt8
 ];
+
+export const DATA_ARRAY_LENGTH = 51;
 
 interface DataPacket {
     sequence: number;
     data: DataArray;
-}
-
-interface CommandPacket {
-    uuid: string;
-    command: CommandType;
 }
 
 interface StatusPacket {
@@ -35,7 +35,6 @@ class ClientState {
     public receivedSequences: Set<number> = new Set();
     // Commands to this client, sent one by one in order and retried until acked
     public commands$: Subject<CommandPacket> = new Subject<CommandPacket>();
-
     // Data packets to this client, one emit per item. Each receiver has its own sender, so a slow client only delays itself.
     constructor(public dataSender: PipelinedSender<DataPacket[]>) {}
 }
@@ -44,7 +43,7 @@ export class Session {
 
     private clientState: Map<Client, ClientState> = new Map();
 
-    private masterSelected: boolean = false;
+    private awaitModeCount: number = 0;
 
     private receivedStati: Set<string> = new Set();
 
@@ -110,7 +109,7 @@ export class Session {
         }
     };
 
-    constructor(private sessionId: string) {}
+    constructor(private sessionId: string, private playerNumber: number) {}
 
     /**
      * Check if the session has started, meaning the first status packet has been received.
@@ -118,8 +117,8 @@ export class Session {
      */
     hasStarted(): boolean { return this.started; }
 
-    private makeCommand(command: CommandType) : CommandPacket {
-        return {uuid: uuidv4(), command: command}
+    private makeCommand<C extends SendableCommand>(command: C, args: CommandArgs[C]): CommandPacket {
+        return {uuid: uuidv4(), command: command, args: args} as CommandPacket;
     }
 
     private handleStatusMessage(client: Client, statusPacket: StatusPacket): void {
@@ -130,13 +129,11 @@ export class Session {
 
         switch (statusPacket.linkStatus) {
             case LinkStatus.AwaitMode:
-                if (!this.masterSelected) {
-                    this.sendCommand(client, CommandType.SetModeMaster);
-                    this.masterSelected = true;
-                }
-                else {
-                    this.sendCommand(client, CommandType.SetModeSlave);
-                }
+                this.sendCommand(client, CommandType.PlayerSettings, {
+                    playerCount: this.playerNumber,
+                    playerIndex: this.awaitModeCount
+                });
+                this.awaitModeCount++;
                 break
 
             case LinkStatus.AwaitModeEmulator:
@@ -196,7 +193,7 @@ export class Session {
      * @returns {boolean} - true if the session is full, false otherwise.
      */
     isFull(): boolean {
-        return this.clients.length >= 2;
+        return this.clients.length >= this.playerNumber;
     }
 
     /**
@@ -246,7 +243,9 @@ export class Session {
                 }
             }));
         });
-        this.emitToOppositeSocket(client, "partnerJoined");
+        if (this.isFull()) {
+            this.emitToAllSockets("partyReady");
+        }
         client.inSession(true)
         return true;
     }
@@ -266,7 +265,7 @@ export class Session {
             this.removeClient(client);
             this.evict();
         } else {
-            this.emitToOppositeSocket(client, "partnerLeft");
+            this.emitToOppositeSocket(client, "partyNotReady");
             this.removeClient(client);
         }
     }
@@ -301,46 +300,63 @@ export class Session {
      * @param event
      */
     private emitToOppositeSocket(client: Client, event: string) {
-        if (this.clients.length != 2) return;
-        if (client.id() === this.clients[0].id()) {
-            console.log('Emitting to Client ' + this.clients[1].id() + ': ' + event);
-            this.clients[1].emitSessionEvent(event);
-        }
-        else {
-            console.log('Emitting to Client ' + this.clients[0].id() + ': ' + event);
-            this.clients[0].emitSessionEvent(event);
-        }
+        if (this.clients.length <= 1) return;
+        this.clients.forEach(tempClient => {
+            if (tempClient.id() === client.id()) return;
+            console.log('Emitting to Client ' + tempClient.id() + ': ' + event);
+            tempClient.emitSessionEvent(event);
+        });
     }
 
     /**
-     * Queue a command for the given client.
+     * Send a session event to all clients.
+     * @param event
+     */
+    private emitToAllSockets(event: string) {
+        if (this.clients.length <= 1) return;
+        this.clients.forEach(tempClient => {
+            console.log('Emitting to Client ' + tempClient.id() + ': ' + event);
+            tempClient.emitSessionEvent(event);
+        });
+    }
+
+    /**
+     * Queue a command for the given client. Commands with args require them, commands without take none.
+     * @param client
+     * @param command
+     * @param args
+     */
+    private sendCommand<C extends SendableCommand>(client: Client, command: C,
+                                                   ...args: CommandArgs[C] extends undefined ? [] : [CommandArgs[C]]) {
+        console.log('Sending command to Client ' + client.id() + ': ' + CommandType[command] + (args.length ? ' ' + JSON.stringify(args[0]) : ''));
+        this.clientState.get(client)?.commands$.next(this.makeCommand(command, args[0] as CommandArgs[C]));
+    }
+
+    /**
+     * Queue a command for the opposite client of the given client.
+     * Save to call when only one client is in the session.
      * @param client
      * @param command
      */
-    private sendCommand(client: Client, command: CommandType) {
-        console.log('Sending command to Client ' + client.id() + ': ' + CommandType[command]);
-        this.clientState.get(client)?.commands$.next(this.makeCommand(command));
+    private sendCommandToOppositeClient(client: Client, command: CommandType.StartHandshake | CommandType.ConnectLink) {
+        if (this.clients.length <= 1) return;
+        this.clients.forEach(tempClient => {
+            if (tempClient.id() === client.id()) return;
+            this.sendCommand(tempClient, command);
+        })
     }
 
     /**
-     * Queue a command for the opposite client of the given client. Save to call when only one client is in the session.
-     * @param client
-     * @param command
-     */
-    private sendCommandToOppositeClient(client: Client, command: CommandType) {
-        if (this.clients.length != 2) return;
-        let receiverClient = this.clients[0] === client ? this.clients[1] : this.clients[0];
-        this.sendCommand(receiverClient, command);
-    }
-
-    /**
-     * Queue data packets for the opposite client of the given client. Save to call when only one client is in the session.
+     * Queue data packets for the opposite client of the given client.
+     * Save to call when only one client is in the session.
      * @param client
      * @param dataPackets
      */
     private sendDataToOppositeClient(client: Client, dataPackets: DataPacket[]) {
-        if (this.clients.length != 2 || dataPackets.length === 0) return;
-        let receiverClient = this.clients[0] === client ? this.clients[1] : this.clients[0];
-        this.clientState.get(receiverClient)?.dataSender.push(dataPackets);
+        if (this.clients.length <= 1 || dataPackets.length === 0) return;
+        this.clients.forEach(tempClient => {
+            if (tempClient.id() === client.id()) return;
+            this.clientState.get(tempClient)?.dataSender.push(dataPackets);
+        })
     }
 }

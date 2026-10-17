@@ -3,7 +3,7 @@ import {ErrorType, SessionManager} from "./sessionManager.js";
 import {BehaviorSubject, concatMap, Observable, Subject, switchMap} from 'rxjs';
 import {v4 as uuidv4} from 'uuid';
 import {err} from 'true-myth/result';
-import {AckFn, isAckFn, isSessionId} from "./messages/validation.js";
+import {AckFn, isAckFn, isPlayerNumber, isSessionId} from "./messages/validation.js";
 
 /**
  * An emit ran out of retries because the client is disconnected. Removing the client is up to the disconnect
@@ -24,12 +24,17 @@ export class Client {
     private sessionEvents$: Subject<string> = new Subject<string>();
     private eventHandlers: Record<string, (...args: unknown[]) => void> = {
 
-        sessionCreate: (_: unknown, responseHandler: unknown) => {
+        sessionCreate: (playerNumber: unknown, responseHandler: unknown) => {
             if (!isAckFn(responseHandler)) {
                 console.warn('Client ' + this.clientId + ' sent sessionCreate without ack callback');
                 return;
             }
-            const sessionState = this.sessionManager.createSession(this);
+            if (!isPlayerNumber(playerNumber)) {
+                console.warn('Client ' + this.clientId + ' sent sessionCreate with invalid player number');
+                responseHandler(err(ErrorType.InvalidRequest));
+                return;
+            }
+            const sessionState = this.sessionManager.createSession(this, playerNumber);
             if (sessionState.isOk) console.log('Client ' + this.clientId + ` created session with id ` + sessionState.value.id);
             responseHandler(sessionState);
         },
