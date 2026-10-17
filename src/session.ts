@@ -16,7 +16,6 @@ export type DataArray = [
     UInt8, UInt8, UInt8
 ];
 
-export const DATA_ARRAY_LENGTH = 51;
 
 interface DataPacket {
     sequence: number;

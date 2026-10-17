@@ -3,13 +3,17 @@
  * client sent, so every incoming event must be checked before it is used.
  */
 
-export const DATA_ARRAY_LENGTH = 32;
+export const DATA_ARRAY_LENGTH = 51;
 const MAX_DATA_BATCH_SIZE = 1024;
 
 export type AckFn = (response: unknown) => void;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isUInt8(value: unknown): value is number {
+    return Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 0xFF;
 }
 
 function isUInt16(value: unknown): value is number {
@@ -51,7 +55,7 @@ export function isDataPacket(value: unknown): value is { sequence: number, data:
         && isSequenceNumber(value.sequence)
         && Array.isArray(value.data)
         && value.data.length === DATA_ARRAY_LENGTH
-        && value.data.every(isUInt16);
+        && value.data.every(isUInt8);
 }
 
 export function isDataPacketBatch(value: unknown): value is { sequence: number, data: number[] }[] {
