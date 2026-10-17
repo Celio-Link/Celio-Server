@@ -30,8 +30,13 @@ interface StatusPacket {
 class ClientState {
     public status: LinkStatus = LinkStatus.Empty;
     public subscription: Subscription = new Subscription();
-    // Sequence numbers of data packets received from this client, to drop duplicates from retries
-    public receivedSequences: Set<number> = new Set();
+    // Next sequence number expected from this client. Lower numbers are duplicates from retries.
+    public expectedSequence: number = 0;
+    // Data from this client that arrived before an earlier packet, released once the gap is filled
+    public bufferedData: Map<number, DataArray> = new Map();
+    // Next sequence number for data sent to this client. The server numbers the data itself, so data
+    // from several senders reaches each client as one gapless sequence.
+    public outgoingSequence: number = 0;
     // Commands to this client, sent one by one in order and retried until acked
     public commands$: Subject<CommandPacket> = new Subject<CommandPacket>();
     // Data packets to this client, one emit per item. Each receiver has its own sender, so a slow client only delays itself.
@@ -43,6 +48,8 @@ export class Session {
     private clientState: Map<Client, ClientState> = new Map();
 
     private awaitModeCount: number = 0;
+
+    private linkConnectedCount: number = 0;
 
     private receivedStati: Set<string> = new Set();
 
@@ -88,22 +95,29 @@ export class Session {
                 ack?.(false);
                 return;
             }
-            let receivedSequences = this.clientState.get(client)?.receivedSequences
-            if (!receivedSequences) {
+            const clientState = this.clientState.get(client);
+            if (!clientState) {
                 console.log("Received data packet for unknown client");
                 ack?.(false);
                 return;
             }
-            const newPackets: DataPacket[] = [];
             for (const dataPacket of dataPackets as DataPacket[]) {
-                if (receivedSequences.has(dataPacket.sequence)) {
+                if (dataPacket.sequence < clientState.expectedSequence || clientState.bufferedData.has(dataPacket.sequence)) {
                     console.warn("Client " + client.id() + " sent duplicate data packet " + dataPacket.sequence);
                     continue;
                 }
-                receivedSequences.add(dataPacket.sequence);
-                newPackets.push(dataPacket);
+                clientState.bufferedData.set(dataPacket.sequence, dataPacket.data);
             }
-            this.sendDataToOppositeClient(client, newPackets);
+            // Release the data in the order the client sent it
+            const newData: DataArray[] = [];
+            let nextData = clientState.bufferedData.get(clientState.expectedSequence);
+            while (nextData) {
+                clientState.bufferedData.delete(clientState.expectedSequence);
+                clientState.expectedSequence++;
+                newData.push(nextData);
+                nextData = clientState.bufferedData.get(clientState.expectedSequence);
+            }
+            this.sendDataToOppositeClient(client, newData);
             ack?.(true);
         }
     };
@@ -157,7 +171,10 @@ export class Session {
 
             case LinkStatus.LinkConnected:
                 clientState.status = LinkStatus.LinkConnected;
-                this.sendCommandToOppositeClient(client, CommandType.ConnectLink);
+                this.linkConnectedCount++;
+                if (this.linkConnectedCount % this.playerNumber === 1) {
+                    this.sendCommandToOppositeClient(client, CommandType.ConnectLink);
+                }
                 break;
 
             case LinkStatus.LinkReconnecting:
@@ -349,13 +366,16 @@ export class Session {
      * Queue data packets for the opposite client of the given client.
      * Save to call when only one client is in the session.
      * @param client
-     * @param dataPackets
+     * @param data - Data in the order the sender sent it, numbered per receiver.
      */
-    private sendDataToOppositeClient(client: Client, dataPackets: DataPacket[]) {
-        if (this.clients.length <= 1 || dataPackets.length === 0) return;
+    private sendDataToOppositeClient(client: Client, data: DataArray[]) {
+        if (this.clients.length <= 1 || data.length === 0) return;
         this.clients.forEach(tempClient => {
             if (tempClient.id() === client.id()) return;
-            this.clientState.get(tempClient)?.dataSender.push(dataPackets);
+            const receiverState = this.clientState.get(tempClient);
+            if (!receiverState) return;
+            const dataPackets = data.map(dataArray => ({sequence: receiverState.outgoingSequence++, data: dataArray}));
+            receiverState.dataSender.push(dataPackets);
         })
     }
 }
