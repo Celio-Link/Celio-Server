@@ -19,6 +19,12 @@ export class ClientDisconnectedError extends Error {
 export class Client {
 
     private currentlyInSession: boolean = false;
+    // Smoothed ack round trip, from first sends only (Karn): the ack timeout follows the line.
+    private srttMs: number | undefined;
+    private ackTimeoutMs(floor: number): number {
+        if (this.srttMs === undefined) return floor;
+        return Math.min(8000, Math.max(floor, Math.round(2 * this.srttMs)));
+    }
     private socket$: BehaviorSubject<Socket>;
     private disconnectTimer: ReturnType<typeof setTimeout> | undefined;
     private sessionEvents$: Subject<string> = new Subject<string>();
@@ -156,27 +162,47 @@ export class Client {
     emitWithRetry<R>(event: string, data?: any, {
         retries = 5,
         timeout = 1000,
-        backoff = 100  // ms added per retry
+        backoff = 100  // ms before resending a copy that failed outright, times the attempt
     } = {}) {
+        // A copy that is only slow is sent again when its wait runs out, each wait twice the last (1, 2, 4, 8,
+        // 8, 8 s from a 1 s start), and every copy listens for its ack until the last one's time is up: on a line
+        // slower than the wait, the first copy's ack still arrives, and counts. Only an ack for the first copy is
+        // timed (Karn). A copy that fails outright is sent again after `backoff`, as before.
+        const base = this.ackTimeoutMs(timeout);
+        const waits = Array.from({length: retries + 1}, (_, i) => Math.min(8000, base * 2 ** i));
+        const deadline = Date.now() + waits.reduce((a, b) => a + b, 0);
         return new Promise((resolve, reject) => {
-            let attempt = 0;
+            let attempt = 0, settled = false, timer: ReturnType<typeof setTimeout> | undefined;
+
+            const giveUp = () => {
+                settled = true;
+                clearTimeout(timer);
+                reject(this.socket.connected ? new Error("Max retries reached") : new ClientDisconnectedError());
+            };
+            const next = (delay: number) => {
+                clearTimeout(timer);
+                if (attempt > retries) giveUp();
+                else timer = setTimeout(tryEmit, delay);
+            };
 
             const tryEmit = () => {
-                attempt++;
-
-                this.socket.timeout(timeout).emit(event, data, (err: Error | null, ackValue: R) => {
-                    if (!err) {
-                        resolve(true);
+                const copy = attempt++;
+                const sentAt = Date.now();
+                this.socket.timeout(Math.max(1, deadline - sentAt)).emit(event, data, (err: Error | null, ackValue: R) => {
+                    if (settled) return;
+                    if (err) {
+                        if (copy === attempt - 1) next(backoff * attempt);   // the newest copy failed: resend now
                         return;
                     }
-
-                    if (attempt > retries) {
-                        reject(this.socket.connected ? new Error("Max retries reached") : new ClientDisconnectedError());
-                        return;
+                    settled = true;
+                    clearTimeout(timer);
+                    if (copy === 0) {
+                        const rtt = Date.now() - sentAt;
+                        this.srttMs = this.srttMs === undefined ? rtt : (7 * this.srttMs + rtt) / 8;
                     }
-
-                    setTimeout(tryEmit, backoff * attempt);
+                    resolve(true);
                 });
+                timer = setTimeout(() => { if (!settled) next(0); }, waits[copy]);
             };
 
             tryEmit();

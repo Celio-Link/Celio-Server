@@ -12,7 +12,7 @@ const io = new Server(httpServer, {
     cors: { origin: "*" },
     transports: ["websocket"], // 🚀 only WebSocket
     pingInterval: 500,
-    pingTimeout: 2000
+    pingTimeout: 5000
 });
 
 const sessionManager: SessionManager = new SessionManager();
